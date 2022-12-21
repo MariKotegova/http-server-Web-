@@ -1,97 +1,106 @@
 package ru.netology;
 
+import java.io.*;
 import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class Server {
-
     ServerSocket serverSocket;
+    Map<String, ConcurrentHashMap<String, Handler>> handlers;
 
     public Server() {
-        System.out.println("Сервер готов к работе");
+        System.out.println("Start server");
+        handlers = new ConcurrentHashMap<>();
     }
 
-    public ServerSocket startServer() throws IOException {
-        serverSocket = new ServerSocket(9999);
-        return serverSocket;
-    }
-
-    public void connection(Socket socket, List<String> validPaths) {
-
-        try (final var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-             final var out = new BufferedOutputStream(socket.getOutputStream())) {
-
-            // read only request line for simplicity
-            // must be in form GET /path HTTP/1.1
-            final var requestLine = in.readLine(); //читаем всю строку
-            final var parts = requestLine.split(" ");// разбиваем строку по пробелам(метод. путь к ресурсу. версия протокола)
-
-            if (parts.length != 3) {// смотрим если в строке меньше 3х эл то читаем следующую
-                // just close socket
-                socket.close();
+    public void start(int port) {
+        try {
+            serverSocket = new ServerSocket(port);
+            while (true) {
+                acept();
             }
-
-            final var path = parts[1]; // вытаскиваем путь к ресурсу
-            if (!validPaths.contains(path)) {// проверяем попадает он или нет в наш список
-                out.write((// если не попадает то выдаст эту ошибку
-                        "HTTP/1.1 404 Not Found\r\n" +
-                                "Content-Length: 0\r\n" +
-                                "Connection: close\r\n" +
-                                "\r\n"
-                ).getBytes());// формируется выходной поток и он записывается в поток байт и отправляется пользователю
-                out.flush();
-                socket.close();
-            }
-
-            final var filePath = Path.of(".", "public", path);// указываем по какой ссылке обращаться
-            //.- корневая папка, "public"- папка в ней, path - путь к ресурсу
-            // localhost:9999/index.html
-            final var mimeType = Files.probeContentType(filePath);// с помощью этого метода определяем тип по которому можно обращаться
-            //к файлу .
-
-            // special case for classic
-            // шаблонизатор.
-            if (path.equals("/classic.html")) {// по этому ссылке можно допустим вывести время(или что то другое)
-                final var template = Files.readString(filePath); //читаем текст как строку
-                final var content = template.replace(// в шаблоне ищем якорь {time} который заменяем нашими данными
-                        // template.replace с помощью этого метода.
-                        "{time}",
-                        // сюда можно вписать любой текст или блок кода и он его вставит, например "hello"
-                        LocalDateTime.now().toString()// будем подставлять дату
-                ).getBytes();
-                out.write((
-                        "HTTP/1.1 200 OK\r\n" +
-                                "Content-Type: " + mimeType + "\r\n" +
-                                "Content-Length: " + content.length + "\r\n" +
-                                "Connection: close\r\n" +
-                                "\r\n"
-                ).getBytes());
-                out.write(content);
-                out.flush();
-                socket.close();
-            }
-
-            final var length = Files.size(filePath);// определяем длину тела ответа
-            out.write((// созлаем выходной поток с котдом выполнения, передаем потоком байт
-                    "HTTP/1.1 200 OK\r\n" +
-                            // если написать так то покажет не картинку а текст в файле html "Content-Type: " + "text/plain" + "\r\n" +// путь к файлу
-                            "Content-Type: " + mimeType + "\r\n" +// путь к файлу
-                            "Content-Length: " + length + "\r\n" +// длина тела ответа
-                            "Connection: close\r\n" +
-                            "\r\n"
-            ).getBytes());
-            Files.copy(filePath, out);// копируем файл в тело ответа
-            out.flush();
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public void acept() {
+        final int limit = 4096;
+        final Socket socket;
+        try {
+            socket = serverSocket.accept();
+            ExecutorService threadPool = Executors.newFixedThreadPool(64);// пул на 64 потока
+
+            Runnable runnable = () -> {
+                try (
+                        final var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                        final var out = new BufferedOutputStream(socket.getOutputStream());
+                ) {
+                    // read only request line for simplicity
+                    // must be in form GET /path HTTP/1.1
+                    final var requestLine = in.readLine();
+                    final var parts = requestLine.split(" ");
+
+                    if (parts.length != 3) {
+                        // just close socket
+                        socket.close();
+                    }
+
+                    final var path = parts[1];
+                    Request request = new Request(parts[0], parts[1], parts[2]);
+                    //System.out.println(request);
+                    // проверяем попадает ли запрос в наш список путей, если нет выдаем ошибку
+                    if (!handlers.containsKey(request.getMetod()) &
+                            !handlers.get(request.getMetod()).containsKey(request.getHead())) {
+
+                        bedRequest(out);
+                    } else {
+
+                        Handler handler = handlers.get(request.getMetod()).get(request.getHead());
+                        handler.handle(request, out);
+                        out.flush();
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            };
+            threadPool.submit(runnable);// стартует потоки
+            threadPool.shutdown(); // закроит потоки когда они будут не нужны
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void addHandler(String metod, String path, Handler handler) {
+        if (!handlers.containsKey(metod)) {
+            handlers.put(metod, new ConcurrentHashMap<>());
+        }
+        handlers.get(metod).put(path, handler);
+
+        File file = new File("./public" + path);
+        try {
+            if (file.createNewFile()) {
+                System.out.println("Создан новый файл: " + path);
+            } else {
+                System.out.println("Файл не создан ");
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void bedRequest(BufferedOutputStream out) throws IOException {
+        out.write((
+                "HTTP/1.1 404 Not Found\r\n" +
+                        "Content-Length: 0\r\n" +
+                        "Connection: close&\r\n" +
+                        "\r\n"
+        ).getBytes());
+        out.flush();
     }
 }
