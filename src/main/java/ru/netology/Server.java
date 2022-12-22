@@ -2,12 +2,18 @@ package ru.netology;
 
 import java.io.*;
 import java.io.BufferedOutputStream;
+import java.lang.reflect.Array;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.Buffer;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 public class Server {
     ServerSocket serverSocket;
@@ -30,7 +36,7 @@ public class Server {
     }
 
     public void acept() {
-        final int limit = 4096;
+        final int limit = 4096; // ограничение на размер реквестлайн и заголовков
         final Socket socket;
         try {
             socket = serverSocket.accept();
@@ -38,13 +44,24 @@ public class Server {
 
             Runnable runnable = () -> {
                 try (
-                        final var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                        final var in = new BufferedInputStream(socket.getInputStream());
                         final var out = new BufferedOutputStream(socket.getOutputStream());
                 ) {
-                    // read only request line for simplicity
-                    // must be in form GET /path HTTP/1.1
-                    final var requestLine = in.readLine();
-                    final var parts = requestLine.split(" ");
+
+                    in.mark(limit);
+                    final var buffer = new byte[limit];
+                    final var read = in.read(buffer); // читаем данные из буфера но не более нашего лимита
+                    in.reset();
+
+                //   // ищем request line
+                   final var requestLineDelimiter = new byte[]{'\r', '\n'};
+                   final var requestLineEnd = indexOf(buffer, requestLineDelimiter, 0, read);
+                    if (requestLineEnd == -1) {
+                       bedRequest(out);
+                       socket.close();
+                   }
+
+                    final var parts = new String(Arrays.copyOf(buffer, requestLineEnd)).split(" ");
 
                     if (parts.length != 3) {
                         // just close socket
@@ -53,18 +70,58 @@ public class Server {
 
                     final var path = parts[1];
                     Request request = new Request(parts[0], parts[1], parts[2]);
-                    //System.out.println(request);
+
+                    String metod = parts[0];
+                    System.out.println(metod);
+                    System.out.println(path);
+                    String protocol = parts[2];
+                    System.out.println(protocol);
+
                     // проверяем попадает ли запрос в наш список путей, если нет выдаем ошибку
                     if (!handlers.containsKey(request.getMetod()) &
-                            !handlers.get(request.getMetod()).containsKey(request.getHead())) {
-
+                            !handlers.get(request.getMetod()).containsKey(request.getPath())) {
+                        bedRequest(out);
+                    } else if (!parts[1].startsWith("/")) {
                         bedRequest(out);
                     } else {
-
-                        Handler handler = handlers.get(request.getMetod()).get(request.getHead());
+                        Handler handler = handlers.get(request.getMetod()).get(request.getPath());
                         handler.handle(request, out);
                         out.flush();
                     }
+
+                    // ищем заголовки
+                    final var headersDelimiter = new byte[]{'\r', '\n', '\r', '\n'};
+                    final var headersStart = requestLineEnd + requestLineDelimiter.length;
+                    final var headersEnd = indexOf(buffer, headersDelimiter, headersStart, read);
+                    if (headersEnd == -1) {
+                        bedRequest(out);
+                        socket.close();
+                    }
+                    // отматываем на начало буфера
+                    in.reset();
+                    // пропускаем requestLine
+                    in.skip(headersStart);
+
+                    final var headersBytes = in.readNBytes(headersEnd - headersStart);
+                    final var headers = Arrays.asList(new String(headersBytes).split("\r\n"));
+                    request.setHead(headers);
+                    System.out.println(headers);
+
+                    // для GET тела нет
+                    if (parts[0].equals("GET")) {
+                        in.skip(headersDelimiter.length);
+                        // вычитываем Content-Length, чтобы прочитать body
+                        final var contentLength = extractHeader(headers, "Content-Length");
+                        if (contentLength.isPresent()) {
+                            final var length = Integer.parseInt(contentLength.get());
+                            final var bodyBytes = in.readNBytes(length);
+
+                            final var body = new String(bodyBytes);
+                            request.setBody(body);
+                            System.out.println(body);
+                        }
+                    }
+
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
@@ -102,5 +159,27 @@ public class Server {
                         "\r\n"
         ).getBytes());
         out.flush();
+    }
+
+    // from google guava with modifications
+    private static int indexOf(byte[] array, byte[] target, int start, int max) {
+        outer:
+        for (int i = start; i < max - target.length + 1; i++) {
+            for (int j = 0; j < target.length; j++) {
+                if (array[i + j] != target[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        return -1;
+    }
+
+    private static Optional<String> extractHeader(List<String> headers, String header) {
+        return headers.stream()
+                .filter(o -> o.startsWith(header))
+                .map(o -> o.substring(o.indexOf(" ")))
+                .map(String::trim)
+                .findFirst();
     }
 }

@@ -12,7 +12,7 @@ public class Main {
             public void handle(Request request, BufferedOutputStream responseStream) {
 
                 try {
-                    final var filePath = Path.of(".", "public", request.getHead());
+                    final var filePath = Path.of(".", "public", request.getPath());
                     //System.out.println(" пришло " + filePath);
                     final var mimeType = Files.probeContentType(filePath);
                     final var length = Files.size(filePath);
@@ -24,7 +24,7 @@ public class Main {
                                     "Connection: close\r\n" +
                                     "\r\n"
                     ).getBytes());
-                    Files.copy(filePath, responseStream); // выведет в браузер
+                    Files.copy(filePath, responseStream); // выведет в браузер  то что написано в файле
                     responseStream.flush();
 
                 } catch (IOException e) {
@@ -35,8 +35,8 @@ public class Main {
         server.addHandler("POST", "/messages", new Handler() {
             public void handle(Request request, BufferedOutputStream responseStream) {
                 try {
-                    final var filePath = Path.of(".", "public", request.getHead());
-                    final var mimeType = request.getBody();
+                    final var filePath = Path.of(".", "public", request.getPath());
+                    final var mimeType = request.getProtocol();
 
                     FileWriter writer = new FileWriter(filePath.toFile());
                     writer.write(mimeType);
