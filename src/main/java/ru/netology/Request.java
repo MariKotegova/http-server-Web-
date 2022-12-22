@@ -9,23 +9,25 @@ public class Request {
     List<String> head;
     String body;
 
-    public Request(String metod, String path, String protocol){
+    public Request(String metod, String path, String protocol) {
         this.metod = metod;
         this.path = path;
         this.protocol = protocol;
     }
 
-    public String getMetod(){
+    public String getMetod() {
         return metod;
     }
-    public String getPath(){
+
+    public String getPath() {
         return path;
     }
-    public String getProtocol(){
+
+    public String getProtocol() {
         return protocol;
     }
 
-    public void setHead(List<String> head){
+    public void setHead(List<String> head) {
         this.head = head;
     }
 
@@ -42,8 +44,7 @@ public class Request {
     }
 
     @Override
-    public String toString (){
+    public String toString() {
         return metod + " " + path + " " + protocol;
     }
-
 }

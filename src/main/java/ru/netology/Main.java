@@ -8,9 +8,8 @@ public class Main {
     public static void main(String[] args) {
         Server server = new Server();
         // добавление handler'ов (обработчиков)
-        server.addHandler("GET", "/messages.txt", new Handler() {
+        server.addHandler("GET", "/messages", new Handler() {
             public void handle(Request request, BufferedOutputStream responseStream) {
-
                 try {
                     final var filePath = Path.of(".", "public", request.getPath());
                     //System.out.println(" пришло " + filePath);

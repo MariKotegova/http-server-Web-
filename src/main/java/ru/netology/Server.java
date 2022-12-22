@@ -1,19 +1,18 @@
 package ru.netology;
 
+import org.apache.http.NameValuePair;
+import org.apache.http.client.utils.URLEncodedUtils;
+
 import java.io.*;
 import java.io.BufferedOutputStream;
-import java.lang.reflect.Array;
+
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.Buffer;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
 
 public class Server {
     ServerSocket serverSocket;
@@ -43,28 +42,25 @@ public class Server {
             ExecutorService threadPool = Executors.newFixedThreadPool(64);// пул на 64 потока
 
             Runnable runnable = () -> {
-                try (
-                        final var in = new BufferedInputStream(socket.getInputStream());
-                        final var out = new BufferedOutputStream(socket.getOutputStream());
-                ) {
+                try (final var in = new BufferedInputStream(socket.getInputStream());
+                     final var out = new BufferedOutputStream(socket.getOutputStream());) {
 
                     in.mark(limit);
                     final var buffer = new byte[limit];
                     final var read = in.read(buffer); // читаем данные из буфера но не более нашего лимита
                     in.reset();
 
-                //   // ищем request line
-                   final var requestLineDelimiter = new byte[]{'\r', '\n'};
-                   final var requestLineEnd = indexOf(buffer, requestLineDelimiter, 0, read);
+                   // ищем request line
+                    final var requestLineDelimiter = new byte[]{'\r', '\n'};
+                    final var requestLineEnd = indexOf(buffer, requestLineDelimiter, 0, read);
                     if (requestLineEnd == -1) {
-                       bedRequest(out);
-                       socket.close();
-                   }
+                        bedRequest(out);
+                        socket.close();
+                    }
 
                     final var parts = new String(Arrays.copyOf(buffer, requestLineEnd)).split(" ");
 
                     if (parts.length != 3) {
-                        // just close socket
                         socket.close();
                     }
 
@@ -72,10 +68,10 @@ public class Server {
                     Request request = new Request(parts[0], parts[1], parts[2]);
 
                     String metod = parts[0];
-                    System.out.println(metod);
-                    System.out.println(path);
+                    //System.out.println(metod);
+                    //System.out.println(path);
                     String protocol = parts[2];
-                    System.out.println(protocol);
+                    //System.out.println(protocol);
 
                     // проверяем попадает ли запрос в наш список путей, если нет выдаем ошибку
                     if (!handlers.containsKey(request.getMetod()) &
@@ -105,7 +101,7 @@ public class Server {
                     final var headersBytes = in.readNBytes(headersEnd - headersStart);
                     final var headers = Arrays.asList(new String(headersBytes).split("\r\n"));
                     request.setHead(headers);
-                    System.out.println(headers);
+                    //System.out.println(headers);
 
                     // для GET тела нет
                     if (parts[0].equals("GET")) {
@@ -118,9 +114,14 @@ public class Server {
 
                             final var body = new String(bodyBytes);
                             request.setBody(body);
-                            System.out.println(body);
+                           // System.out.println(body);
                         }
                     }
+
+                    List<NameValuePair> paths = getQueryParams(request);
+                    List<List<String>> param = new ArrayList<>();
+                    param.add(getQueryParam(paths, path, request));
+                    System.out.println("\nпуть " + path + "\nсодержет следующие заголовки\n" + param + "\n");
 
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -131,6 +132,19 @@ public class Server {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public List<NameValuePair> getQueryParams(Request request) {
+        return URLEncodedUtils.parse(request.path, StandardCharsets.UTF_8);
+    }
+
+    public List<String> getQueryParam(List<NameValuePair> paths, String path, Request request) {
+        for (NameValuePair name : paths) {
+            if (path.startsWith(name.getName())) {
+                return request.getHead();
+            }
+        }
+        return null;
     }
 
     public void addHandler(String metod, String path, Handler handler) {
